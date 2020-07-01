@@ -1,0 +1,4 @@
+*.pyc
+manila_extensions.egg-info
+dist
+.eggs

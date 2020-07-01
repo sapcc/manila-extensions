@@ -1,0 +1,4 @@
+oslo.config
+oslo.log
+oslo.utils
+pbr
