@@ -28,15 +28,14 @@ from manila import version
 
 CONF = cfg.CONF
 
-HOST_UPDATE_HELP_MSG = ("A fully qualified host string is of the format "
-                        "'HostA@BackendB#PoolC'. Provide only the host name "
-                        "(ex: 'HostA') to update the hostname part of "
-                        "the host string. Provide only the "
-                        "host name and backend name (ex: 'HostA@BackendB') to "
-                        "update the host and backend names.")
-HOST_UPDATE_CURRENT_HOST_HELP = ("Current share host name. %s" %
+HOST_UPDATE_HELP_MSG = ("A host string is of the format 'HostA@BackendB' "
+                        "(without the #Pool, this part would be ignored). "
+                        "Provide only the host name (ex: 'HostA') to update "
+                        "the hostname part of the host string. ")
+HOST_UPDATE_CURRENT_HOST_HELP = ("Current share server host name. %s" %
                                  HOST_UPDATE_HELP_MSG)
-HOST_UPDATE_NEW_HOST_HELP = "New share host name. %s" % HOST_UPDATE_HELP_MSG
+HOST_UPDATE_NEW_HOST_HELP = ("New share server host name. %s" %
+                             HOST_UPDATE_HELP_MSG)
 
 
 # Decorators for actions
@@ -52,9 +51,7 @@ class ShareCommands(object):
     def _validate_hosts(current_host, new_host):
         err = None
         if '@' in current_host:
-            if '#' in current_host and '#' not in new_host:
-                err = "%(chost)s specifies a pool but %(nhost)s does not."
-            elif '@' not in new_host:
+            if '@' not in new_host:
                 err = "%(chost)s specifies a backend but %(nhost)s does not."
         if err:
             print(err % {'chost': current_host, 'nhost': new_host})
@@ -63,8 +60,11 @@ class ShareCommands(object):
     @staticmethod
     def _update_host_values(host, current_host, new_host):
         updated_host = host.replace(current_host, new_host)
+        # remove the pool part, we don't know the target pool
+        # the driver will find out (see _ensure_share_instance_has_pool method)
+        updated_host_without_pool = updated_host.split('#')[0]
         updated_values = {
-            'host': updated_host,
+            'host': updated_host_without_pool,
             'updated_at': timeutils.utcnow()
         }
         return updated_values
@@ -99,29 +99,29 @@ class ShareCommands(object):
         server = db.share_server_get(ctxt, uuid)
         server_host = server['host']
 
-        server_current_host = current_host.split('#')[0]
-        server_new_host = new_host.split('#')[0]
+        current_host_without_pool = current_host.split('#')[0]
+        new_host_without_pool = new_host.split('#')[0]
 
-        if server_current_host in server_host:
+        if current_host_without_pool in server_host:
             db.share_server_update(
                 ctxt, uuid,
                 self._update_host_values(
                     server_host,
-                    server_current_host,
-                    server_new_host
+                    current_host,
+                    new_host
                 )
             )
 
         for si in db.share_instances_get_all_by_share_server(ctxt, uuid):
             si_host = si['host']
-            if current_host in si_host:
+            if current_host_without_pool in si_host:
                 db.share_instance_update(
                     ctxt, si['id'],
                     self._update_host_values(si_host, current_host, new_host)
                 )
 
         ports = db.network_allocations_get_for_share_server(ctxt, uuid)
-        port_new_host = server_new_host.split('@')[0]
+        port_new_host = new_host_without_pool.split('@')[0]
         for port in ports:
             self._update_port_host_id(port['id'], port_new_host)
 
