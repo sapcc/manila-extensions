@@ -23,6 +23,7 @@ from oslo_utils import timeutils
 from manila.common import config  # Need to register global_opts  # noqa
 from manila import context
 from manila import db
+from manila import exception
 from manila.i18n import _
 from manila import version
 
@@ -71,7 +72,6 @@ class ShareCommands(object):
 
     @staticmethod
     def _update_port_host_id(port_id, host_id):
-        from manila import exception
         from manila.network.neutron import api as neutron_api
         from neutronclient.common import exceptions as neutron_client_exc
 
@@ -124,6 +124,28 @@ class ShareCommands(object):
         port_new_host = new_host_without_pool.split('@')[0]
         for port in ports:
             self._update_port_host_id(port['id'], port_new_host)
+
+    @args('uuid', help='share id')
+    def delete(self, uuid):
+        """Delete a share that has no share instances.
+
+        Due to lost amqp messages, it can happen, that we have shares without
+        related share instances.
+        Since normally share db objects are deleted when the last share instance
+        is removed, we have no other way of doing this via API.
+        """
+        ctxt = context.get_admin_context()
+        try:
+            share = db.share_get(ctxt, uuid)
+        except exception.NotFound:
+            msg = _("Share '%s' not found.") % uuid
+            print(msg)
+            sys.exit(1)
+        try:
+            db.share_delete(ctxt, share['id'])
+        except exception.InvalidShare as e:
+            print(e)
+            sys.exit(1)
 
 
 CATEGORIES = {
