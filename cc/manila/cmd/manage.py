@@ -20,9 +20,10 @@ from oslo_config import cfg
 from oslo_log import log
 from oslo_utils import timeutils
 
-from manila.common import config  # Need to register global_opts  # noqa
+from manila.common import config, constants  # Need to register global_opts  # noqa
 from manila import context
 from manila import db
+from manila.db.sqlalchemy import models
 from manila.i18n import _
 from manila import version
 
@@ -125,6 +126,132 @@ class ShareCommands(object):
         for port in ports:
             self._update_port_host_id(port['id'], port_new_host)
 
+    @args('uuid', help='share id')
+    def undelete(self, uuid):
+        """Restore soft-deleted share and its relations.
+
+        The following will be restored:
+
+        Share
+        ShareAccessMapping
+        ShareAccessRulesMetadata
+        ShareInstance
+        ShareInstanceAccessMapping
+        ShareInstanceExportLocations
+        ShareInstanceExportLocationsMetadata
+        ShareMetadata
+
+        Not handled:
+
+        Message
+        QuotaUsage
+        Reservation
+
+        Caveats:
+        Currently this restores everything, not looking at the dates
+        so things that have not been purged will become alive again.
+        This may be wrong if those had been intentionally deleted
+        in a short timeframe before the unintended delete action.
+        Especially in case of access rules the result should be verified.
+        """
+        share_instance_ids = []
+        # FIXME: there is a bug with the read_deleted option
+        # the behaviour of 'yes' and 'only' is flipped
+        # we want to read both: deleted and non-deleted entries
+        # so we currently have to specify 'only'
+        ctxt = context.get_admin_context(read_deleted='only')
+        # have to work on share instances before shares
+        # because manila.db.sqlalchemy.models.Share.instance()
+        # is hardcoded to ignore deleted entries
+        session = db.IMPL.get_session()
+        share_instances = db.share_instances_get_all_by_share(ctxt, uuid)
+        for share_instance in share_instances:
+            db.share_instance_update(
+                ctxt, share_instance.id,
+                {'deleted': 'False',
+                    'status': constants.STATUS_AVAILABLE,
+                    'access_rules_status': constants.SHARE_INSTANCE_RULES_SYNCING
+            })
+            share_instance_ids.append(share_instance.id)
+
+            share_instance_access_rules = db.IMPL.model_query(
+                ctxt,
+                models.ShareInstanceAccessMapping,
+                session=session
+            ).filter_by(
+                share_instance_id=share_instance.id
+            ).all()
+
+            for share_instance_access_rule in share_instance_access_rules:
+                share_instance_access_rule.update({
+                    'deleted': 'False',
+                    'state': constants.ACCESS_STATE_QUEUED_TO_APPLY
+                })
+                share_instance_access_rule.save(session)
+
+        # deleted export locations are hard go get, so we need to use IMPL
+        # FIXME: remove read_deleted="no" from _share_export_locations_get
+        # skip el_metadata_bare since it is also hardcoded to non deleted
+        export_locations = db.IMPL.model_query(
+            ctxt,
+            models.ShareInstanceExportLocations,
+            session=session
+        ).filter(models.ShareInstanceExportLocations.share_instance_id.in_(
+            share_instance_ids)
+        ).all()
+
+        for export_location in export_locations:
+            export_location.update({'deleted': 0})
+            export_location.save(session)
+            export_location_metadata = db.IMPL.model_query(
+                ctxt,
+                models.ShareInstanceExportLocationsMetadata,
+                session=session
+            ).filter_by(
+                export_location_id=export_location.id,
+            ).all()
+
+            for el_metadatum in export_location_metadata:
+                el_metadatum.update({'deleted': 0})
+                el_metadatum.save(session)
+
+        access_rules = db.IMPL.model_query(
+            ctxt,
+            models.ShareAccessMapping,
+            session=session
+        ).filter_by(
+            share_id=uuid
+        ).all()
+
+        for access_rule in access_rules:
+            access_rule.update({'deleted': 'False'})
+            access_rule.save(session)
+
+            access_rule_metadata = db.IMPL.model_query(
+                ctxt,
+                models.ShareAccessRulesMetadata,
+                session=session
+            ).filter_by(
+                access_id=access_rule.id,
+            ).all()
+
+            for access_rule_metadatum in access_rule_metadata:
+                access_rule_metadatum.update({'deleted': 'False'})
+                access_rule_metadatum.save(session)
+
+        share_metadata = db.IMPL.model_query(
+            ctxt,
+            models.ShareMetadata,
+            session=session
+        ).filter_by(
+            share_id=uuid
+        ).all()
+
+        for share_metadatum in share_metadata:
+            share_metadatum.update({'deleted': 0})
+            share_metadatum.save(session)
+
+        db.share_update(ctxt, uuid, {'deleted': 'False'})
 
 CATEGORIES = {
     'share': ShareCommands
