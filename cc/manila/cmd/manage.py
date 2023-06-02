@@ -14,6 +14,7 @@
 
 from __future__ import print_function
 
+import pprint
 import sys
 
 from oslo_config import cfg
@@ -125,6 +126,48 @@ class ShareCommands(object):
         port_new_host = new_host_without_pool.split('@')[0]
         for port in ports:
             self._update_port_host_id(port['id'], port_new_host)
+
+    @args('uuid', help='share server id')
+    @args('skip_reason', help='comment, why ensure share server is skipped')
+    def server_set_skip_ensure(self, uuid, skip_reason):
+        """Add skip ensure flag to share server backend details.
+
+        Similar to the snapmirror flag for shares that excludes them from
+        ensure runs (also excludes them from castellum autoscaling).
+        Sometimes we don't want 'ensure', because we manually set things on
+        the storage backend.
+        """
+        ctxt = context.get_admin_context()
+        server_details = {
+            'skip_ensure': 'yes',
+            'skip_ensure_comment': skip_reason,
+        }
+        backend_details = db.share_server_backend_details_set(ctxt, uuid,
+                                                              server_details)
+        print('added share server backend details:')
+        pprint.pprint(backend_details)
+
+    @args('uuid', help='share server id')
+    def server_unset_skip_ensure(self, uuid):
+        """Undo skip ensure flag on share server backend details.
+
+        Make sure 'ensure' is running again for this share server.
+        Unsets the 'skip_ensure' and 'skip_ensure_comment' keys.
+        """
+        ctxt = context.get_admin_context()
+        share_server = db.share_server_get(ctxt, uuid)
+        server_details = share_server.backend_details
+        server_details.pop('skip_ensure', None)
+        server_details.pop('skip_ensure_comment', None)
+        print('remaining share server backend details:')
+        pprint.pprint(server_details)
+
+        # This is suboptimal:
+        # we remove all details and apply the ones that should remain.
+        # Could be improved by adding a method in the db layer that lets us
+        # remove single keys from backend details.
+        db.share_server_backend_details_delete(ctxt, uuid)
+        db.share_server_backend_details_set(ctxt, uuid, server_details)
 
     @args('uuid', help='share id')
     def undelete(self, uuid):
