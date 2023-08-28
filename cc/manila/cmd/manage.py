@@ -26,6 +26,7 @@ from manila import context
 from manila import db
 from manila.db.sqlalchemy import models
 from manila.i18n import _
+from manila import utils
 from manila import version
 
 CONF = cfg.CONF
@@ -103,6 +104,8 @@ class ShareCommands(object):
 
         current_host_without_pool = current_host.split('#')[0]
         new_host_without_pool = new_host.split('#')[0]
+        # check that new host is valid and up
+        utils.validate_service_host(ctxt, new_host_without_pool)
 
         if current_host_without_pool in server_host:
             db.share_server_update(
