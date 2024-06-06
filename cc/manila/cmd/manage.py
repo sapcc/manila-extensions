@@ -26,6 +26,8 @@ from manila import context
 from manila import db
 from manila.db.sqlalchemy import models
 from manila.i18n import _
+from manila import rpc
+from manila.share import rpcapi as share_rpcapi
 from manila import utils
 from manila import version
 
@@ -200,6 +202,9 @@ class ShareCommands(object):
         in a short timeframe before the unintended delete action.
         Especially in case of access rules the result should be verified.
         """
+        rpc.init(cfg.CONF)
+        self.share_rpcapi = share_rpcapi.ShareAPI()
+
         share_instance_ids = []
         # FIXME: there is a bug with the read_deleted option
         # the behaviour of 'yes' and 'only' is flipped
@@ -298,6 +303,25 @@ class ShareCommands(object):
             share_metadatum.save(session)
 
         db.share_update(ctxt, uuid, {'deleted': 'False'})
+        restored_sis = db.share_instances_get_all_by_share(ctxt, uuid)
+        for restored_share_instance in restored_sis:
+            self.share_rpcapi.update_access(ctxt, restored_share_instance)
+
+        # IDEA: recreate junction path
+        # junction_path = export_location.split(':')[1]
+        # but this method must be offered via share_rpcapi
+        # and routed to the right driver host
+        # vserver_client.mount_volume(volume_name, junction_path)
+
+        # IDEA: if anyhow manila is touched and a new rpc method will be
+        # created, we could also go the full way and also implement
+        # the restore from recovery queue
+
+        # IDEA: ensure single share (mainly to set export locations)
+        # may come from upstream with a future manila release
+        # otherwise this would mean implementation effort
+        # to expose the netapp driver's _create_export() method
+        # via rpc and persisting the result in the db
 
 CATEGORIES = {
     'share': ShareCommands
