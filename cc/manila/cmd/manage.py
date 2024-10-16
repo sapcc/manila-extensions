@@ -210,19 +210,23 @@ class ShareCommands(object):
         # the behaviour of 'yes' and 'only' is flipped
         # we want to read both: deleted and non-deleted entries
         # so we currently have to specify 'only'
+        # fixed in 2023.2 (Bobcat) with
+        # https://review.opendev.org/c/openstack/manila/+/879294
         ctxt = context.get_admin_context(read_deleted='only')
         # have to work on share instances before shares
         # because manila.db.sqlalchemy.models.Share.instance()
         # is hardcoded to ignore deleted entries
         session = db.IMPL.get_session()
         share_instances = db.share_instances_get_all_by_share(ctxt, uuid)
+        share_instance_params = {
+            'deleted': 'False',
+            'deleted_at': None,
+            'status': constants.STATUS_AVAILABLE,
+            'access_rules_status': constants.SHARE_INSTANCE_RULES_SYNCING
+        }
         for share_instance in share_instances:
-            db.share_instance_update(
-                ctxt, share_instance.id,
-                {'deleted': 'False',
-                    'status': constants.STATUS_AVAILABLE,
-                    'access_rules_status': constants.SHARE_INSTANCE_RULES_SYNCING
-            })
+            db.share_instance_update(ctxt, share_instance.id,
+                share_instance_params)
             share_instance_ids.append(share_instance.id)
 
             share_instance_access_rules = db.IMPL.model_query(
@@ -236,6 +240,7 @@ class ShareCommands(object):
             for share_instance_access_rule in share_instance_access_rules:
                 share_instance_access_rule.update({
                     'deleted': 'False',
+                    'deleted_at': None,
                     'state': constants.ACCESS_STATE_QUEUED_TO_APPLY
                 })
                 share_instance_access_rule.save(session)
@@ -252,7 +257,7 @@ class ShareCommands(object):
         ).all()
 
         for export_location in export_locations:
-            export_location.update({'deleted': 0})
+            export_location.update({'deleted': 0, 'deleted_at': None})
             export_location.save(session)
             export_location_metadata = db.IMPL.model_query(
                 ctxt,
@@ -263,7 +268,7 @@ class ShareCommands(object):
             ).all()
 
             for el_metadatum in export_location_metadata:
-                el_metadatum.update({'deleted': 0})
+                el_metadatum.update({'deleted': 0, 'deleted_at': None})
                 el_metadatum.save(session)
 
         access_rules = db.IMPL.model_query(
@@ -275,7 +280,7 @@ class ShareCommands(object):
         ).all()
 
         for access_rule in access_rules:
-            access_rule.update({'deleted': 'False'})
+            access_rule.update({'deleted': 'False', 'deleted_at': None})
             access_rule.save(session)
 
             access_rule_metadata = db.IMPL.model_query(
@@ -287,7 +292,8 @@ class ShareCommands(object):
             ).all()
 
             for access_rule_metadatum in access_rule_metadata:
-                access_rule_metadatum.update({'deleted': 'False'})
+                access_rule_metadatum.update({'deleted': 'False',
+                    'deleted_at': None})
                 access_rule_metadatum.save(session)
 
         share_metadata = db.IMPL.model_query(
@@ -299,10 +305,10 @@ class ShareCommands(object):
         ).all()
 
         for share_metadatum in share_metadata:
-            share_metadatum.update({'deleted': 0})
+            share_metadatum.update({'deleted': 0, 'deleted_at': None})
             share_metadatum.save(session)
 
-        db.share_update(ctxt, uuid, {'deleted': 'False'})
+        db.share_update(ctxt, uuid, {'deleted': 'False', 'deleted_at': None})
         restored_sis = db.share_instances_get_all_by_share(ctxt, uuid)
         for restored_share_instance in restored_sis:
             self.share_rpcapi.update_access(ctxt, restored_share_instance)
