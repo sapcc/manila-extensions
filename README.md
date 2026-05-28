@@ -15,3 +15,11 @@ The manila-manage-extension cli offers:
 Install the python package into the manila (virtual) environment
 
     pip install git+https://github.com/sapcc/manila-extensions.git
+
+## Activity
+
+As of May 28th 2026 the project is still active.
+
+We tend to put our changes to manila directly to the manila code base, but if
+you have a use case for the manila-manage-extension cli, please feel free to
+open an issue or even better a pull request with your implementation.
