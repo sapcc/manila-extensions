@@ -119,7 +119,7 @@ class ShareCommands(object):
                 )
             )
 
-        for si in db.share_instances_get_all_by_share_server(ctxt, uuid):
+        for si in db.share_instance_get_all_by_share_server(ctxt, uuid):
             si_host = si['host']
             if current_host_without_pool in si_host:
                 db.share_instance_update(
@@ -206,13 +206,11 @@ class ShareCommands(object):
         self.share_rpcapi = share_rpcapi.ShareAPI()
 
         share_instance_ids = []
-        # FIXME: there is a bug with the read_deleted option
-        # the behaviour of 'yes' and 'only' is flipped
-        # we want to read both: deleted and non-deleted entries
-        # so we currently have to specify 'only'
-        # fixed in 2023.2 (Bobcat) with
-        # https://review.opendev.org/c/openstack/manila/+/879294
-        ctxt = context.get_admin_context(read_deleted='only')
+        # 'yes' returns both deleted and non-deleted entries
+        # (the previously flipped 'yes'/'only' semantics were corrected in
+        # 2023.2 Bobcat via
+        # https://review.opendev.org/c/openstack/manila/+/879294)
+        ctxt = context.get_admin_context(read_deleted='yes')
         # have to work on share instances before shares
         # because manila.db.sqlalchemy.models.Share.instance()
         # is hardcoded to ignore deleted entries
