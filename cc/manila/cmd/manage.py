@@ -75,14 +75,50 @@ class ShareCommands(object):
         return updated_values
 
     @staticmethod
+    def _port_binding_count(client, port_id):
+        """Return the number of bindings on a port, or None if unknown.
+
+        Uses the port-binding extension's list endpoint. Returns None if the
+        extension/endpoint is unavailable so callers can fall back to the
+        legacy single-binding update.
+        """
+        from neutronclient.common import exceptions as neutron_client_exc
+
+        try:
+            return len(client.list_port_bindings(port_id).get('bindings', []))
+        except (neutron_client_exc.NeutronClientException, AttributeError):
+            return None
+
+    @staticmethod
     def _update_port_host_id(port_id, host_id):
         from manila import exception
         from manila.network.neutron import api as neutron_api
         from neutronclient.common import exceptions as neutron_client_exc
 
+        client = neutron_api.API().client
+
+        # A migrated Manila Port usually carries more than one binding: the
+        # source host's (ACTIVE) plus the destination host's (INACTIVE) created
+        # during migration-start. A plain update_port of binding:host_id is
+        # ambiguous there -- it neither deletes the stale source binding nor
+        # activates the inactive target one via /bindings/<host>/activate -- so
+        # we refuse it and point the operator at the dedicated zorro command,
+        # which does the full Neutron REST + ml2_port_bindings reconciliation.
+        binding_count = ShareCommands._port_binding_count(client, port_id)
+        if binding_count is not None and binding_count > 1:
+            print("Port %(port)s has %(n)d bindings; refusing the ambiguous "
+                  "single-binding update. Rebind every Port of the share "
+                  "server at once with:\n"
+                  "    screw manila cleanup-port-bindings <share_server_id> -f\n"
+                  "or this one Port with:\n"
+                  "    screw os cleanup-port-bindings-after-migration "
+                  "%(port)s --target-host %(host)s"
+                  % {'port': port_id, 'n': binding_count, 'host': host_id})
+            return None
+
         try:
             port_req_body = {'port': {'binding:host_id': host_id}}
-            port = neutron_api.API().client.update_port(
+            port = client.update_port(
                 port_id, port_req_body).get('port', {})
             return port
         except neutron_client_exc.NeutronClientException as e:
@@ -129,8 +165,15 @@ class ShareCommands(object):
 
         ports = db.network_allocations_get_for_share_server(ctxt, uuid)
         port_new_host = new_host_without_pool.split('@')[0]
+        deferred_ports = []
         for port in ports:
-            self._update_port_host_id(port['id'], port_new_host)
+            if self._update_port_host_id(port['id'], port_new_host) is None:
+                deferred_ports.append(port['id'])
+        if deferred_ports:
+            print("\n%d Port(s) had multiple bindings and were NOT rebound "
+                  "here. Finish them with:\n"
+                  "    screw manila cleanup-port-bindings %s -f"
+                  % (len(deferred_ports), uuid))
 
     @args('uuid', help='share server id')
     @args('skip_reason', help='comment, why ensure share server is skipped')
